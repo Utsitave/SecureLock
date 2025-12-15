@@ -5,7 +5,7 @@ import sys
 
 from aiomqtt import Client, MqttError
 
-BROKER_HOST = os.getenv("MQTT_HOST", "localhost")
+BROKER_HOST = os.getenv("MQTT_HOST", "192.168.229.169")
 BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
 MQTT_USER = os.getenv("MQTT_USER", "backend")
 MQTT_PASS = os.getenv("MQTT_PASS", "12345678")
@@ -81,7 +81,7 @@ async def mqtt_main():
             async def periodic_publisher():
                 """Wysyłanie testowej komendy co 10 sekund."""
                 while True:
-                    cmd = {"action": "unlock", "cmdId": "cmd-1"}
+                    cmd = {"action": "unlock", "cmdId": "1"}
                     await publish(client, cmd)
                     await asyncio.sleep(10)
 
