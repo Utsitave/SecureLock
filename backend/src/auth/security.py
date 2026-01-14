@@ -5,7 +5,7 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-JWT_SECRET = "CHANGE_ME"         # najlepiej z env
+JWT_SECRET = "to_nie_ja_to_chat"         # najlepiej z env
 JWT_ALG = "HS256"
 ACCESS_MIN = 15
 REFRESH_DAYS = 30

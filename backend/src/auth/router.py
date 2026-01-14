@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
-from src.database import get_db
+from src.db import get_db
 from src.models import User, RefreshSession
 from src.auth.schemas import RegisterIn, LoginIn, RefreshIn, TokenOut
 from src.auth.security import (

@@ -1,7 +1,7 @@
 # main.py
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from app.auth.router import router as auth_router
+from src.auth.router import router as auth_router
 from mqtt_service import MQTTService
 
 app = FastAPI()
