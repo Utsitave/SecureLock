@@ -60,7 +60,8 @@ class Device(Base):
     id_device: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     id_user: Mapped[int] = mapped_column(
         ForeignKey("users.id_user", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
     )
 
     # nazwa/przyjazny opis urządzenia do wyświetlania w apce
@@ -83,36 +84,6 @@ class Device(Base):
         cascade="all, delete-orphan",
         order_by="desc(Event.created_at)",
     )
-
-
-# =========================
-#  EVENTS
-# =========================
-class Event(Base):
-    __tablename__ = "events"
-
-    id_event: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
-    id_device: Mapped[int] = mapped_column(
-        ForeignKey("devices.id_device", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    # np. "alarm_triggered", "door_opened", "guest_detected"
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-
-    # szczegóły zdarzenia – elastyczne JSON
-    # w SQLite też działa, traktowane jako TEXT
-    payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-        index=True,
-    )
-
-    device: Mapped["Device"] = relationship(back_populates="events")
 
 # =========================
 #  REFRESH SESSION
