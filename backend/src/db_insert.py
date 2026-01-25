@@ -52,7 +52,7 @@ def seed():
             name="Smart Drzwi 1",
             opis="Drzwi do CS 301",
             hw_uid="1",
-            state=True,   # OPEN
+            is_open=True,   # OPEN
             user=user1,
         )
 
@@ -60,7 +60,7 @@ def seed():
             name="Smart Drzwi 2",
             opis="Drzwi do LAB 403",
             hw_uid="2",
-            state=False,  # OFF
+            is_open=False,  # OFF
             user=user1,
         )
 
@@ -68,7 +68,7 @@ def seed():
             name="Lampka nocna",
             opis="Smart LED",
             hw_uid="3",
-            state=True,   # ON
+            is_open=True,   # ON
             user=user2,
         )
 

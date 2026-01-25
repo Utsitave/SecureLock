@@ -70,8 +70,13 @@ class Device(Base):
     # np. identyfikator sprzętowy / MQTT (home/<hw_uid>/events)
     hw_uid: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
 
-    # stan urządzenia (np. ON/OFF)
-    state: Mapped[bool] = mapped_column(
+    is_open: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="0",
+    )
+
+    alarm_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         server_default="0",

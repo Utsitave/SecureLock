@@ -13,6 +13,7 @@ from src.routers.router import get_current_user  # <- MUSI zwracać obiekt User
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
 DoorState = Literal["open", "closed"]
+AlarmState = Literal["active", "inactive"]
 
 # Tymczasowy cache stanu (per hw_uid, tylko w pamięci backendu)
 _state_cache: Dict[str, DoorState] = {}
@@ -25,6 +26,13 @@ class DoorStateIn(BaseModel):
 class DoorStateOut(BaseModel):
     hw_uid: str
     state: DoorState
+
+class AlarmStateIn(BaseModel):
+        state: AlarmState
+
+class AlarmStateOut(BaseModel):
+        hw_uid: str
+        state: AlarmState
 
 
 def get_owned_device(
@@ -48,10 +56,14 @@ async def get_device_state(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    get_owned_device(db, hw_uid, user)
+    device = get_owned_device(db, hw_uid, user)
 
-    state = _state_cache.get(hw_uid, "closed")
-    return {"hw_uid": hw_uid, "state": state}
+    state: DoorState = "open" if device.is_open else "closed"
+
+    return {
+        "hw_uid": hw_uid,
+        "state": state,
+    }
 
 
 @router.post("/{hw_uid}/state", response_model=DoorStateOut)
@@ -61,19 +73,65 @@ async def set_device_state(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    get_owned_device(db, hw_uid, user)
+    device = get_owned_device(db, hw_uid, user)
 
-    # zapisz stan lokalnie
-    _state_cache[hw_uid] = payload.state
+    # mapowanie API -> baza
+    new_state_bool = payload.state == "open"
 
-    # mapowanie stan -> komenda dla ESP
-    action = "0" if payload.state == "open" else "1"
+    # zapisz do bazy
+    device.is_open = new_state_bool
+    db.commit()
+    db.refresh(device)
 
-    cmd = action
+    # mapowanie API -> MQTT
+    cmd = "0" if payload.state == "open" else "1"
 
     try:
         await publish_to_device(hw_uid, cmd)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return {"hw_uid": hw_uid, "state": payload.state}
+    return {
+        "hw_uid": hw_uid,
+        "state": payload.state,
+    }
+
+
+@router.get("/{hw_uid}/alarm", response_model=AlarmStateOut)
+async def get_device_alarm(
+    hw_uid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = get_owned_device(db, hw_uid, user)
+
+    state: AlarmState = "active" if device.alarm_active else "inactive"
+    return {"hw_uid": hw_uid, "state": state}
+
+
+@router.post("/{hw_uid}/alarm", response_model=AlarmStateOut)
+async def set_device_alarm(
+    hw_uid: str,
+    payload: AlarmStateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = get_owned_device(db, hw_uid, user)
+
+    alarm_bool = payload.state == "active"
+    device.alarm_active = alarm_bool
+    db.commit()
+    db.refresh(device)
+
+    cmd = "1" if alarm_bool else "0"
+    topic = f"doorlock/{hw_uid}/alarm"
+
+    try:
+        await publish_to_device(hw_uid, cmd)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "hw_uid": hw_uid,
+        "state": payload.state,
+    }
