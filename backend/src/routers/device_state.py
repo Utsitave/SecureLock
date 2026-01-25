@@ -67,12 +67,9 @@ async def set_device_state(
     _state_cache[hw_uid] = payload.state
 
     # mapowanie stan -> komenda dla ESP
-    action = "unlock" if payload.state == "open" else "lock"
+    action = "0" if payload.state == "open" else "1"
 
-    cmd = {
-        "action": action,
-        "cmdId": str(int(time.time() * 1000)),
-    }
+    cmd = action
 
     try:
         await publish_to_device(hw_uid, cmd)
