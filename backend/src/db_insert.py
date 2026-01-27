@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from models import Base, User, Device, RefreshSession
+from auth.security import hash_password
 
 # =========================
 # KONFIGURACJA BAZY
@@ -34,7 +35,7 @@ def seed():
         user1 = User(
             username="uladzislau",
             email="utsitavets@gmail.com",
-            password_hash="hashed_password_123",
+            password_hash=hash_password("haslo123"),
             nr_telefonu="576243480",
         )
 

@@ -2,18 +2,24 @@
 import os
 import ssl
 import sys
-from typing import Optional
+from typing import Optional, Literal
 import asyncio
+
+from aiomqtt import Client, MqttError
+
 from src.db import SessionLocal
 from src.alarm_repo import get_alarm_recipient_by_hw_uid
 from src.email_service import send_alarm_email
-from aiomqtt import Client, MqttError
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except Exception:
     pass
+
+
+PublishChannel = Literal["cmd", "alarm"]
 
 
 def _require_env(name: str) -> str:
@@ -33,14 +39,17 @@ def build_tls_context() -> ssl.SSLContext:
     ctx.load_verify_locations(cafile=ca_path)
     ctx.load_cert_chain(certfile=cert_path, keyfile=key_path, password=key_password)
 
+    # Czasem potrzebne przy "dziwnych" CA (np. z ESP), zostawiamy jak było
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
     return ctx
 
 
+# Na Windowsie aiomqtt często wymaga Selector loop
 if sys.platform.lower().startswith("win"):
     from asyncio import set_event_loop_policy, WindowsSelectorEventLoopPolicy
+
     set_event_loop_policy(WindowsSelectorEventLoopPolicy())
 
 
@@ -48,23 +57,17 @@ def _get_mqtt_auth() -> tuple[Optional[str], Optional[str]]:
     return os.getenv("MQTT_USER"), os.getenv("MQTT_PASS")
 
 
-async def publish_to_device(hw_uid: str, command: str) -> None:
-    """
-    Publikuje komendę MQTT do konkretnego urządzenia.
-
-    Topic: doorlock/<hw_uid>/cmd
-    Payload: string / JSON string
-    """
+def _sync_publish(hw_uid: str, payload: str, channel: str) -> None:
+    """Synchroniczna wersja publish w osobnym wątku z SelectorEventLoop (Windows fix)."""
     host = _require_env("MQTT_HOST")
     port = int(os.getenv("MQTT_PORT", "8883"))
 
-    topic = f"doorlock/{hw_uid}/cmd"
-    payload = command
+    topic = f"doorlock/{hw_uid}/{channel}"
 
     tls_context = build_tls_context()
     username, password = _get_mqtt_auth()
 
-    try:
+    async def _do_publish():
         async with Client(
             hostname=host,
             port=port,
@@ -75,7 +78,29 @@ async def publish_to_device(hw_uid: str, command: str) -> None:
         ) as client:
             await client.publish(topic, payload, qos=1)
             print(f"[MQTT] {topic} <- {payload}")
-    except MqttError as e:
+
+    loop = asyncio.SelectorEventLoop()
+    try:
+        loop.run_until_complete(_do_publish())
+    finally:
+        loop.close()
+
+
+async def publish_to_device(
+    hw_uid: str,
+    payload: str,
+    channel: PublishChannel = "cmd",
+) -> None:
+    """
+    Publikuje wiadomość MQTT do konkretnego urządzenia.
+
+    Kanały:
+    - cmd   -> doorlock/<hw_uid>/cmd
+    - alarm -> doorlock/<hw_uid>/alarm
+    """
+    try:
+        await asyncio.to_thread(_sync_publish, hw_uid, payload, channel)
+    except Exception as e:
         raise RuntimeError(f"MQTT publish failed: {e}") from e
 
 
@@ -85,11 +110,12 @@ async def listen_alarm_states(hw_uid: Optional[str] = None) -> None:
     - Jeśli hw_uid jest podany: subskrybuje doorlock/<hw_uid>/alarm/state
     - Jeśli hw_uid=None: subskrybuje doorlock/+/alarm/state (wszystkie urządzenia)
 
-    Gdy payload == "1" -> wypisuje alert z hw_uid.
+    Gdy payload == "1" -> wypisuje alert + próbuje wysłać mail do przypisanego usera.
     """
     loop = asyncio.get_running_loop()
     print("[MQTT DEBUG] loop type:", type(loop))
     print("[MQTT DEBUG] can add_reader:", hasattr(loop, "add_reader"))
+
     host = _require_env("MQTT_HOST")
     port = int(os.getenv("MQTT_PORT", "8883"))
 
@@ -119,12 +145,17 @@ async def listen_alarm_states(hw_uid: Optional[str] = None) -> None:
                     except Exception:
                         payload = str(msg.payload)
 
-                    # wyciągnij hw_uid z topicu: doorlock/<hw_uid>/alarm/state
+                    # topic: doorlock/<hw_uid>/alarm/state
                     parts = msg.topic.value.split("/")
-                    got_hw_uid = parts[1] if len(parts) >= 4 and parts[0] == "doorlock" else "UNKNOWN"
+                    got_hw_uid = (
+                        parts[1]
+                        if len(parts) >= 4 and parts[0] == "doorlock"
+                        else "UNKNOWN"
+                    )
 
                     if payload == "1":
                         print(f"[ALARM] Otrzymano alarm od urządzenia o hw_uid: {got_hw_uid}")
+
                         db = SessionLocal()
                         try:
                             recipient = get_alarm_recipient_by_hw_uid(db, got_hw_uid)
@@ -133,14 +164,17 @@ async def listen_alarm_states(hw_uid: Optional[str] = None) -> None:
 
                         if not recipient:
                             print(
-                                f"[ALARM] Brak przypisanego użytkownika/email dla hw_uid={got_hw_uid} – nie wysyłam maila.")
+                                f"[ALARM] Brak przypisanego użytkownika/email dla hw_uid={got_hw_uid} – nie wysyłam maila."
+                            )
                             continue
 
                         email, device_name = recipient
 
-                        # 2) wyślij maila (w osobnym wątku, żeby nie blokować listenera)
+                        # wyślij maila w osobnym wątku, żeby nie blokować listenera
                         try:
-                            await asyncio.to_thread(send_alarm_email, email, got_hw_uid, device_name)
+                            await asyncio.to_thread(
+                                send_alarm_email, email, got_hw_uid, device_name
+                            )
                             print(f"[ALARM] Mail wysłany do: {email}")
                         except Exception as e:
                             print(f"[ALARM] Błąd wysyłki maila do {email}: {e}")
@@ -159,10 +193,23 @@ async def listen_alarm_states(hw_uid: Optional[str] = None) -> None:
 
 
 async def _quick_test_publish() -> None:
+    """
+    Szybki test publikacji.
+    Ustaw:
+    - MQTT_TEST_HW_UID (opcjonalnie)
+    - MQTT_TEST_CHANNEL (opcjonalnie: cmd/alarm)
+    - MQTT_TEST_PAYLOAD (opcjonalnie)
+    """
     test_hw_uid = os.getenv("MQTT_TEST_HW_UID", "TEST_DEVICE")
-    test_payload = "1"
-    print("[MQTT TEST] Publishing test message...")
-    await publish_to_device(test_hw_uid, test_payload)
+    test_channel = os.getenv("MQTT_TEST_CHANNEL", "cmd").strip().lower()
+    test_payload = os.getenv("MQTT_TEST_PAYLOAD", "1")
+
+    # Walidacja kanału, żeby nie wpuścić literówki z env
+    if test_channel not in ("cmd", "alarm"):
+        raise RuntimeError("MQTT_TEST_CHANNEL musi być 'cmd' albo 'alarm'")
+
+    print(f"[MQTT TEST] Publishing test message to {test_channel}...")
+    await publish_to_device(test_hw_uid, test_payload, channel=test_channel)  # type: ignore[arg-type]
     print("[MQTT TEST] Done ✔")
 
 

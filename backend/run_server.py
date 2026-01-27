@@ -11,7 +11,7 @@ if __name__ == "__main__":
         "src.main:app",
         host="0.0.0.0",
         port=8011,
-        env_file=r"C:\PBL5projekt\backend\src\.env",
+        env_file=r"C:\Users\Madziaaa\Desktop\ARIUS\apkadodrzwi\SecureLock\backend\.env",
         loop="asyncio",
         reload=False,
     )

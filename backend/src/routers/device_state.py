@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Literal, Dict
+from typing import Literal, Dict, List, Optional
 import time
 
 from sqlalchemy.orm import Session
@@ -33,6 +33,28 @@ class AlarmStateIn(BaseModel):
 class AlarmStateOut(BaseModel):
         hw_uid: str
         state: AlarmState
+
+
+class DeviceOut(BaseModel):
+    id_device: int
+    hw_uid: Optional[str]
+    name: str
+    is_open: bool
+    alarm_active: bool
+
+
+class DeviceListResponse(BaseModel):
+    devices: List[DeviceOut]
+
+
+@router.get("", response_model=DeviceListResponse)
+async def get_user_devices(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pobiera wszystkie urządzenia przypisane do zalogowanego użytkownika."""
+    devices = db.query(Device).filter(Device.id_user == user.id_user).all()
+    return {"devices": devices}
 
 
 def get_owned_device(
@@ -84,7 +106,7 @@ async def set_device_state(
     db.refresh(device)
 
     # mapowanie API -> MQTT
-    cmd = "0" if payload.state == "open" else "1"
+    cmd = "1" if payload.state == "open" else "0"
 
     try:
         await publish_to_device(hw_uid, cmd)
@@ -123,11 +145,10 @@ async def set_device_alarm(
     db.commit()
     db.refresh(device)
 
-    cmd = "1" if alarm_bool else "0"
-    topic = f"doorlock/{hw_uid}/alarm"
+    alarm = "1" if alarm_bool else "0"
 
     try:
-        await publish_to_device(hw_uid, cmd)
+        await publish_to_device(hw_uid, alarm, channel="alarm")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
